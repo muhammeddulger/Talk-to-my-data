@@ -1,0 +1,70 @@
+name: Deploy to Google Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  PROJECT_ID: talk-to-my-data-508110
+  REGION: europe-west4
+  REPO_NAME: talk-to-my-data-repo
+  BACKEND_SERVICE: talk-to-my-data-backend
+  FRONTEND_SERVICE: talk-to-my-data-frontend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Configure Docker to use Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+
+      - name: Build and Push Backend Image
+        run: |
+          IMAGE_TAG=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/backend:${{ github.sha }}
+          docker build -t $IMAGE_TAG -f Dockerfile.backend .
+          docker push $IMAGE_TAG
+
+      - name: Build and Push Frontend Image
+        run: |
+          IMAGE_TAG=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/frontend:${{ github.sha }}
+          docker build -t $IMAGE_TAG -f Dockerfile.frontend .
+          docker push $IMAGE_TAG
+
+      - name: Deploy Backend to Cloud Run
+        run: |
+          IMAGE_TAG=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/backend:${{ github.sha }}
+          
+          gcloud run deploy ${{ env.BACKEND_SERVICE }} \
+            --image $IMAGE_TAG \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --service-account talk-to-my-data-backend@talk-to-my-data-508110.iam.gserviceaccount.com \
+            --set-env-vars="VERTEX_AI_PROJECT_ID=${{ env.PROJECT_ID }},BIGQUERY_PROJECT_ID=${{ env.PROJECT_ID }}" \
+            --allow-unauthenticated
+
+      - name: Deploy Frontend to Cloud Run
+        run: |
+          IMAGE_TAG=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/frontend:${{ github.sha }}
+          
+          # Get backend URL
+          BACKEND_URL=$(gcloud run services describe ${{ env.BACKEND_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
+          
+          gcloud run deploy ${{ env.FRONTEND_SERVICE }} \
+            --image $IMAGE_TAG \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --set-env-vars="BACKEND_API_URL=$BACKEND_URL/ask" \
+            --allow-unauthenticated

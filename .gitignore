@@ -39,3 +39,9 @@ Thumbs.db
 !package.json
 !tsconfig.json
 logs/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
